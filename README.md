@@ -1,21 +1,28 @@
-# MARD-EDO Lab — v1
+# MARD-EDO Lab — Métodos numéricos y PINN
 
-Laboratorio de ecuaciones diferenciales en Streamlit.
+Aplicación educativa de EDO con Euler, Heun, RK4, RK45, Radau, BDF y una PINN de residuo L² para tres problemas escalares precargados.
 
-## Instalación en Windows
+## Iniciar en Windows (CMD)
 
-```powershell
-py -3.11 -m venv .venv
-.\.venv\Scripts\Activate.ps1
+```cmd
+cd /d "C:\Users\HP\Desktop\InfO\Python\MARD-EDO-Lab"
 python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-## Funciones actuales
+## Gráficas
 
-- EDO escalar de primer orden: modelos precargados y función personalizada con sintaxis restringida.
-- Sistemas: oscilador amortiguado de orden 2 y Lotka–Volterra.
-- Euler, Heun y RK4 de paso fijo; RK45, Radau y BDF de SciPy.
-- Gráficas, métricas cuando existe solución analítica y exportación CSV.
+- Soluciones numéricas frente a solución exacta cuando está disponible.
+- Error absoluto, error logarítmico, número de evaluaciones y tiempos.
+- Retrato de fase para modelos con dos variables.
+- Predicción PINN frente a solución exacta y a integradores clásicos compatibles.
+- Pérdida de entrenamiento por época.
+- Residuo diferencial y error absoluto de PINN.
 
-**MARD-EDO/PINN todavía no está implementado.** No usar esta versión para atribuir resultados experimentales a MARD-EDO.
+## Alcance científico
+
+PINN disponible solo para decaimiento exponencial, crecimiento logístico y ecuación rígida forzada. Entrena con pérdida L² y condición inicial exacta; **no implementa todavía la formulación H¹ ni el muestreo adaptativo MARD-EDO**. Las métricas se calculan al ejecutar el programa, no son resultados prefijados.
+
+## Despliegue
+
+Publicar el repositorio en GitHub y desplegar `app.py` desde Streamlit Community Cloud. `torch` puede aumentar el consumo de memoria y el tiempo de instalación en la nube.

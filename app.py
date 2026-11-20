@@ -9,6 +9,8 @@ from typing import Callable
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from pinn import entrenar_pinn
 import streamlit as st
 import sympy as sp
 from scipy.integrate import solve_ivp
@@ -16,11 +18,22 @@ from scipy.integrate import solve_ivp
 st.set_page_config(page_title="MARD-EDO Lab", page_icon="📈", layout="wide")
 st.markdown("""
 <style>
-.stApp {background: linear-gradient(145deg, #080e1e, #142038 68%, #0b1428);}
-h1,h2,h3 {color:#edf7ff}
-[data-testid="stMetric"] {background-color: #162a45; border: 1px solid #315778; padding:13px;border-radius:11px;}
+.stApp {background: #0b1425; color: #edf4ff;}
+[data-testid="stAppViewContainer"] h1,
+[data-testid="stAppViewContainer"] h2,
+[data-testid="stAppViewContainer"] h3,
+[data-testid="stAppViewContainer"] p,
+[data-testid="stAppViewContainer"] label {color:#edf4ff;}
+[data-testid="stSidebar"] {background:#f7f9fc; color:#172033;}
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] label {color:#172033;}
+[data-testid="stMetric"] {background:#1b2e49; border:1px solid #416184; padding:12px; border-radius:12px;}
+[data-testid="stMetric"] label, [data-testid="stMetric"] [data-testid="stMetricValue"] {color:#f8fafc;}
 </style>
-""", unsafe_allow_html=True)
+""",unsafe_allow_html=True)
 
 T, Y, Z = sp.symbols("t y z", real=True)
 ALLOWED_FUNCS = {"sin":sp.sin,"cos":sp.cos,"tan":sp.tan,"exp":sp.exp,
@@ -161,7 +174,7 @@ def run_case(fun,init,t0,tend,n_steps,methods,rtol,atol):
 
 st.title("📈 MARD-EDO Lab")
 st.caption("Laboratorio de ecuaciones diferenciales | Versión 1: métodos numéricos clásicos")
-st.info("Esta versión todavía no entrena PINN ni ejecuta el método experimental MARD-EDO; prepara sus referencias de comparación.")
+st.caption("Comparación de métodos clásicos y PINN de residuo L². MARD-EDO adaptativo es una fase experimental posterior.")
 
 with st.sidebar:
     st.header("1 · Seleccionar problema")
@@ -255,7 +268,103 @@ if "last_run" in st.session_state:
     output=pd.DataFrame(data)
     st.download_button("📥 Descargar soluciones CSV",data=output.to_csv(index=False).encode("utf-8-sig"),file_name="mard_edo_soluciones.csv",mime="text/csv")
     st.download_button("📥 Descargar métricas CSV",data=report.to_csv(index=False).encode("utf-8-sig"),file_name="mard_edo_metricas.csv",mime="text/csv")
+    st.subheader("Diagnóstico gráfico de los métodos numéricos")
+    c1,c2=st.columns(2)
+    with c1:
+        figcost=go.Figure()
+        figcost.add_trace(go.Bar(x=report["Método"],y=report["Evaluaciones f"],name="Evaluaciones de f"))
+        figcost.update_layout(title="Costo: evaluaciones de la función",template="plotly_dark",xaxis_title="Método",yaxis_title="N.º de evaluaciones",height=360)
+        st.plotly_chart(figcost,use_container_width=True)
+    with c2:
+        figtime=go.Figure()
+        figtime.add_trace(go.Bar(x=report["Método"],y=report["Tiempo (s)"],name="Tiempo"))
+        figtime.update_layout(title="Tiempo de integración (segundos)",template="plotly_dark",xaxis_title="Método",yaxis_title="Segundos",height=360)
+        st.plotly_chart(figtime,use_container_width=True)
+    if d["exact"] is not None:
+        figlog=go.Figure()
+        for meth,vals in d["res"].items():
+            figlog.add_trace(go.Scatter(x=d["t"],y=np.maximum(np.abs(vals[:,0]-d["exact"]),1e-16),mode="lines",name=meth))
+        figlog.update_layout(title="Error absoluto en escala logarítmica (variable 1)",template="plotly_dark",xaxis_title="t",yaxis_title="Error absoluto",yaxis_type="log",height=400)
+        st.plotly_chart(figlog,use_container_width=True)
+    if len(d["names"])==2:
+        figphase=go.Figure()
+        for meth,vals in d["res"].items():
+            figphase.add_trace(go.Scatter(x=vals[:,0],y=vals[:,1],name=meth,mode="lines"))
+        figphase.update_layout(title="Retrato de fase del sistema",template="plotly_dark",xaxis_title=d["names"][0],yaxis_title=d["names"][1],height=450)
+        st.plotly_chart(figphase,use_container_width=True)
     st.caption("Las métricas se calculan sobre la malla de salida. El tiempo depende del equipo, carga y entorno. La solución exacta solo se muestra cuando el modelo proporciona una fórmula válida para la condición inicial.")
 else:
     st.subheader("Cómo comenzar")
     st.write("Selecciona una EDO en el panel izquierdo, ajusta sus datos y pulsa **Resolver y comparar**. La aplicación dibujará las soluciones y exportará las tablas.")
+
+
+st.divider()
+st.header("🧠 Entrenamiento PINN y análisis gráfico")
+st.write("PINN con condición inicial impuesta exactamente y pérdida residual L². La solución exacta se usa **solo para evaluación**, no para entrenar.")
+if selected not in ("Decaimiento exponencial","Crecimiento logístico","Forzado rígido"):
+    st.info("Para entrenar una PINN en esta versión, selecciona Decaimiento exponencial, Crecimiento logístico o Forzado rígido. Los sistemas y EDO de orden superior permanecen disponibles con integradores clásicos.")
+else:
+    col_a,col_b,col_c=st.columns(3)
+    with col_a:
+        epochs=st.number_input("Épocas PINN",min_value=100,max_value=20000,value=1500,step=100)
+        lr=st.selectbox("Tasa de aprendizaje",[0.01,0.001,0.0005,0.0001],index=1)
+    with col_b:
+        ncol=st.number_input("Puntos de colocación",min_value=20,max_value=1000,value=100,step=20)
+        width=st.select_slider("Neuronas por capa",options=[16,32,64],value=32)
+    with col_c:
+        seed=st.number_input("Semilla aleatoria",min_value=0,max_value=999999,value=42)
+        st.caption("Tres capas ocultas Tanh; entrenamiento CPU con Adam.")
+    if st.button("🧠 Entrenar PINN y generar gráficas",type="primary",use_container_width=True):
+        if tf<=t0:
+            st.error("El tiempo final debe ser mayor que el inicial.")
+        elif selected=="Crecimiento logístico" and init[0]<=0:
+            st.error("Para el experimento logístico PINN utiliza y₀ > 0.")
+        else:
+            try:
+                with st.spinner("Entrenando la PINN..."):
+                    tabla,hist,metrics=entrenar_pinn(tipo=selected,t0=t0,tf=tf,y0=float(init[0]),kappa=kappa,epocas=int(epochs),puntos=int(ncol),tasa=float(lr),semilla=int(seed),ancho=int(width))
+                st.session_state["pinn_run"]={"tabla":tabla,"hist":hist,"metrics":metrics,"modelo":selected,"t0":t0,"tf":tf,"y0":float(init[0]),"kappa":kappa}
+                st.success("Entrenamiento terminado. Resultados calculados, no simulados.")
+            except Exception as ex:
+                st.error(f"Falló el entrenamiento PINN: {ex}")
+    if "pinn_run" in st.session_state:
+        p=st.session_state["pinn_run"]
+        if (p["modelo"],p["t0"],p["tf"],p["y0"],p["kappa"] if selected=="Forzado rígido" else 0)!=(selected,t0,tf,float(init[0]),kappa if selected=="Forzado rígido" else 0):
+            st.warning("Los resultados PINN pertenecen a otra configuración. Vuelve a entrenar para comparar este modelo.")
+        else:
+            tabla=p["tabla"];hist=p["hist"];metrics=p["metrics"]
+            st.subheader("Resultados del entrenamiento")
+            st.dataframe(pd.DataFrame([metrics]),hide_index=True,use_container_width=True)
+            f1,f2=st.columns(2)
+            with f1:
+                fig=go.Figure()
+                fig.add_trace(go.Scatter(x=tabla["t"],y=tabla["PINN"],name="PINN",line=dict(width=3)))
+                if "Exacta" in tabla:
+                    fig.add_trace(go.Scatter(x=tabla["t"],y=tabla["Exacta"],name="Exacta",line=dict(dash="dash")))
+                if "last_run" in st.session_state:
+                    d0=st.session_state["last_run"]
+                    if d0["model"]==model_text and abs(d0["t"][0]-t0)<1e-10 and abs(d0["t"][-1]-tf)<1e-10 and np.allclose(d0["init"],init):
+                        for met in ("RK4","RK45","BDF","Radau"):
+                            if met in d0["res"]:
+                                fig.add_trace(go.Scatter(x=d0["t"],y=d0["res"][met][:,0],name=met,line=dict(dash="dot")))
+                fig.update_layout(title="Solución PINN vs exacta y métodos clásicos",template="plotly_dark",xaxis_title="t",yaxis_title="y(t)",height=430)
+                st.plotly_chart(fig,use_container_width=True)
+            with f2:
+                fig=go.Figure(go.Scatter(x=hist["epoca"],y=np.maximum(hist["perdida"],1e-18),name="Pérdida L²"))
+                fig.update_layout(title="Convergencia del entrenamiento",template="plotly_dark",xaxis_title="Época",yaxis_title="Pérdida residual L²",yaxis_type="log",height=430)
+                st.plotly_chart(fig,use_container_width=True)
+            f3,f4=st.columns(2)
+            with f3:
+                fig=go.Figure(go.Scatter(x=tabla["t"],y=tabla["Residuo PINN"],name="Residuo"))
+                fig.update_layout(title="Residuo diferencial firmado r(t)",template="plotly_dark",xaxis_title="t",yaxis_title="u′(t) − f(t,u)",height=400)
+                st.plotly_chart(fig,use_container_width=True)
+            with f4:
+                fig=go.Figure()
+                if "Error absoluto PINN" in tabla:
+                    fig.add_trace(go.Scatter(x=tabla["t"],y=tabla["Error absoluto PINN"],name="Error PINN"))
+                fig.add_trace(go.Scatter(x=tabla["t"],y=np.abs(tabla["Residuo PINN"]),name="|Residuo|"))
+                fig.update_layout(title="Error de solución y magnitud del residuo",template="plotly_dark",xaxis_title="t",yaxis_title="Magnitud",height=400)
+                st.plotly_chart(fig,use_container_width=True)
+            st.markdown("**Interpretación:** la pérdida muestra el ajuste a la EDO durante el entrenamiento; el residuo cuantifica la violación local de la ecuación; el error absoluto evalúa la cercanía a la solución exacta. Una pérdida pequeña no garantiza por sí sola error pequeño en todos los puntos.")
+            st.download_button("📥 Descargar predicción PINN CSV",tabla.to_csv(index=False).encode("utf-8-sig"),file_name="mard_edo_pinn.csv",mime="text/csv")
+            st.download_button("📥 Descargar historial PINN CSV",hist.to_csv(index=False).encode("utf-8-sig"),file_name="mard_edo_pinn_historial.csv",mime="text/csv")
